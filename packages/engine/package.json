@@ -12,6 +12,7 @@
     "./ghost-world": "./src/ghost-world/index.ts"
   },
   "scripts": {
+    "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

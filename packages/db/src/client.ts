@@ -2,17 +2,23 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema/index";
 
-if (!process.env["DATABASE_URL"]) {
-  throw new Error("DATABASE_URL environment variable is required");
+// Lazy initialization — don't connect at import time (safe for build/test envs)
+function createDb() {
+  const url = process.env["DATABASE_URL"];
+  if (!url) throw new Error("DATABASE_URL environment variable is required");
+  const client = postgres(url, {
+    max: process.env["NODE_ENV"] === "production" ? 1 : 10,
+    idle_timeout: 20,
+    connect_timeout: 10,
+  });
+  return drizzle(client, { schema });
 }
 
-// Connection pool — reused across requests in a long-running server.
-// In Vercel serverless, each cold start gets a fresh pool (max 1 connection).
-const client = postgres(process.env["DATABASE_URL"], {
-  max: process.env["NODE_ENV"] === "production" ? 1 : 10,
-  idle_timeout: 20,
-  connect_timeout: 10,
+let _db: ReturnType<typeof createDb> | null = null;
+export const db = new Proxy({} as ReturnType<typeof createDb>, {
+  get(_target, prop) {
+    if (!_db) _db = createDb();
+    return (_db as Record<string | symbol, unknown>)[prop];
+  },
 });
-
-export const db = drizzle(client, { schema });
 export type Db = typeof db;
