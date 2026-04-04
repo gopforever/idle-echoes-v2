@@ -52,8 +52,14 @@ export function SkillsAAPanel() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // Refresh on tab switch to pick up latest skills from combat ticks
+  // Refresh on tab switch
   useEffect(() => { void load(); }, [tab, load]);
+
+  // Live poll every 10 seconds so skills update without tab-switching
+  useEffect(() => {
+    const id = setInterval(() => void load(), 10_000);
+    return () => clearInterval(id);
+  }, [load]);
 
   async function handleSpend(nodeId: string) {
     setSpending(nodeId);
@@ -79,7 +85,7 @@ export function SkillsAAPanel() {
     return <div className="game-panel text-center text-muted-foreground text-sm py-6">Loading...</div>;
   }
 
-  const SKILL_IDS: SkillId[] = ["combat", "defense", "archery", "magic", "survival", "luck"];
+  const SKILL_IDS: SkillId[] = ["combat", "defense", "archery", "magic", "survival", "luck", "meditation"];
 
   return (
     <div className="game-panel space-y-3">

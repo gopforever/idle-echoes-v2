@@ -60,6 +60,8 @@ export function awardSkillXp(
   amount: number,
 ): { skill: SkillEntry; leveledUp: boolean } {
   let { level, xp, xpToNext } = skill;
+  // Guard: xpToNext can be undefined/null if stored before initialization
+  xpToNext = (xpToNext != null && xpToNext > 0) ? xpToNext : skillXpToLevel(level + 1);
   xp += amount;
   let leveledUp = false;
   while (xp >= xpToNext && level < SKILL_MAX) {
@@ -97,22 +99,36 @@ export function getSkillBonuses(skills: CharacterSkills) {
 // ─── Meditation stats ─────────────────────────────────────────────────────────
 // Returns how much HP/Power is recovered as a fraction of max, plus cooldown ms.
 
-export interface MeditationStats {
-  /** 0–1 fraction of maxHp restored */
-  hpFraction: number;
-  /** 0–1 fraction of maxPower restored */
-  powerFraction: number;
-  /** Cooldown in milliseconds */
-  cooldownMs: number;
+// ─── Meditation passive regen (EQ-style) ─────────────────────────────────────
+// Called every 6 seconds when the player is not in active combat ("sitting").
+// HP regen scales with skill level. Mana uses the EQ formula: 2 + floor(skill/15).
+// Magic users (Mage/Priest) get 2× mana regeneration.
+
+export interface MeditationRegen {
+  /** Flat HP to restore this tick */
+  hpPerTick: number;
+  /** Flat Power/mana to restore this tick */
+  powerPerTick: number;
 }
 
-export function getMeditationStats(level: number, isMagicUser: boolean): MeditationStats {
-  // HP fraction: 15% base + 0.4% per level, capped at 100%
-  const hpFraction = Math.min(1, 0.15 + (level - 1) * 0.004);
-  // Power fraction: magic users get a 1.5× multiplier
-  const rawPowerFraction = Math.min(1, 0.20 + (level - 1) * 0.004);
-  const powerFraction = isMagicUser ? Math.min(1, rawPowerFraction * 1.5) : rawPowerFraction;
-  // Cooldown: 90s → 15s linearly across 200 levels
-  const cooldownMs = Math.max(15_000, 90_000 - (level - 1) * 375);
-  return { hpFraction, powerFraction, cooldownMs };
+export function getMeditationRegen(
+  level: number,
+  maxHp: number,
+  maxPower: number,
+  isMagicUser: boolean,
+): MeditationRegen {
+  // HP: 1% of maxHp base + 0.1% per skill level (capped at 15% of maxHp per tick)
+  const hpPerTick = Math.max(1, Math.min(
+    Math.floor(maxHp * 0.15),
+    Math.floor(maxHp * (0.01 + (level - 1) * 0.001)),
+  ));
+
+  // Mana: EQ formula — 2 base + floor(skill/15), doubled for magic users
+  const basePower  = 2 + Math.floor(level / 15);
+  const powerPerTick = Math.min(
+    Math.floor(maxPower * 0.15),
+    isMagicUser ? basePower * 2 : basePower,
+  );
+
+  return { hpPerTick, powerPerTick };
 }

@@ -49,14 +49,17 @@ export function effectiveDefense(s: CharacterStats): number {
 }
 
 export function effectiveMitigation(s: CharacterStats): number {
+  // Base 5% floor so naked level-1 players don't take 100% damage.
+  // Scales to ~40% at level 60 without gear; gear mitigation adds on top.
   const raw = 0.8 * s.stamina + 3 * s.level + (s.mitigation ?? 0);
-  return Math.min(0.80, raw / 1000); // cap at 80%
+  return Math.min(0.80, 0.05 + raw / 500);
 }
 
 export function effectiveAvoidance(s: CharacterStats): number {
+  // Base 3% floor; scales to ~20% at level 60 without gear.
   const raw = 0.5 * s.agility + 0.8 * s.level + 5 + (s.avoidance ?? 0);
   const echo = 1 + (s.echoAgiBonus ?? 0) / 100;
-  return Math.min(0.70, (raw * echo) / 1000); // cap at 70%
+  return Math.min(0.70, 0.03 + (raw * echo) / 300);
 }
 
 export function effectiveHaste(s: CharacterStats): number {

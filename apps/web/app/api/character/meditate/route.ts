@@ -3,12 +3,20 @@ import { createClient } from "@/lib/supabase/server";
 import { db, charactersTable } from "@repo/db";
 import { eq } from "drizzle-orm";
 import {
-  getMeditationStats, awardSkillXp, initSkill,
+  getMeditationRegen, awardSkillXp, initSkill,
   type CharacterSkills,
 } from "@repo/engine";
 
 const MAGE_ARCHETYPES = new Set(["Mage", "Priest"]);
 
+/**
+ * POST /api/character/meditate
+ *
+ * EQ-style passive regeneration tick. Called every 6 seconds by the client
+ * when the character is NOT in active combat (i.e. "sitting / meditating").
+ * No cooldown — each call grants one tick of HP + Power regeneration and
+ * awards a small amount of Meditation skill XP.
+ */
 export async function POST() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -23,45 +31,26 @@ export async function POST() {
   const char = rows[0];
   if (!char) return NextResponse.json({ error: "No character found" }, { status: 404 });
 
-  const skills = (char.skills ?? {}) as CharacterSkills;
-  const medSkill = skills.meditation ?? initSkill();
-  const level = medSkill.level ?? 1;
-
-  // ── Cooldown check ──────────────────────────────────────────────────────────
   const isMagicUser = MAGE_ARCHETYPES.has(char.archetype);
-  const { hpFraction, powerFraction, cooldownMs } = getMeditationStats(level, isMagicUser);
+  const skills      = (char.skills ?? {}) as CharacterSkills;
+  const medSkill    = skills.meditation ?? initSkill();
+  const level       = medSkill.level ?? 1;
 
-  if (medSkill.lastUsed) {
-    const elapsed = Date.now() - new Date(medSkill.lastUsed).getTime();
-    if (elapsed < cooldownMs) {
-      const remainingMs = cooldownMs - elapsed;
-      return NextResponse.json({
-        error:       "Meditating...",
-        remainingMs,
-        cooldownMs,
-      }, { status: 429 });
-    }
-  }
-
-  // ── Compute recovery ────────────────────────────────────────────────────────
   const maxHp    = char.maxHp    ?? 100;
   const maxPower = char.maxPower ?? 50;
 
-  const hpHealed    = Math.max(1, Math.floor(maxHp    * hpFraction));
-  const powerGained = Math.max(1, Math.floor(maxPower * powerFraction));
+  // ── Per-tick regen amounts (EQ formula) ────────────────────────────────────
+  const { hpPerTick, powerPerTick } = getMeditationRegen(level, maxHp, maxPower, isMagicUser);
 
-  const newHp    = Math.min(maxHp,    (char.hp    ?? 0) + hpHealed);
-  const newPower = Math.min(maxPower, (char.power ?? 0) + powerGained);
+  const newHp    = Math.min(maxHp,    (char.hp    ?? 0) + hpPerTick);
+  const newPower = Math.min(maxPower, (char.power ?? 0) + powerPerTick);
 
   const actualHpHealed    = newHp    - (char.hp    ?? 0);
   const actualPowerGained = newPower - (char.power ?? 0);
 
   // ── Award meditation skill XP ───────────────────────────────────────────────
-  // XP = 8 base + 1 per skill level (encourages use across all levels)
-  const xpAmount = 8 + Math.floor(level / 10);
-  const { skill: updatedMedSkill, leveledUp } = awardSkillXp(medSkill, xpAmount);
-  updatedMedSkill.lastUsed = new Date().toISOString();
-
+  // 3 XP per tick — small but consistent; accumulates quickly from passive use
+  const { skill: updatedMedSkill, leveledUp } = awardSkillXp(medSkill, 3);
   const updatedSkills: CharacterSkills = { ...skills, meditation: updatedMedSkill };
 
   // ── Persist ─────────────────────────────────────────────────────────────────
@@ -76,17 +65,16 @@ export async function POST() {
     .where(eq(charactersTable.id, char.id));
 
   return NextResponse.json({
-    ok:               true,
-    hp:               newHp,
+    ok:             true,
+    hp:             newHp,
     maxHp,
-    power:            newPower,
+    power:          newPower,
     maxPower,
-    hpHealed:         actualHpHealed,
-    powerGained:      actualPowerGained,
-    cooldownMs,
-    skillLevel:       updatedMedSkill.level,
-    skillXp:          updatedMedSkill.xp,
-    skillXpToNext:    updatedMedSkill.xpToNext,
+    hpHealed:       actualHpHealed,
+    powerGained:    actualPowerGained,
+    skillLevel:     updatedMedSkill.level,
+    skillXp:        updatedMedSkill.xp,
+    skillXpToNext:  updatedMedSkill.xpToNext,
     leveledUp,
     isMagicUser,
   });

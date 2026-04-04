@@ -95,12 +95,28 @@ export function generateEnemy(
   rng: Rng,
   forceTraits?: Partial<EnemyTraits>,
 ): GeneratedEnemy {
+  // New-player protection: no modifiers or large sizes for low-level enemies
+  const sizePool: EnemySize[] = level <= 3
+    ? ["tiny", "small", "medium"]
+    : level <= 6
+    ? ["tiny", "small", "medium", "large"]
+    : SIZES;
+
+  const bossModifierPool: EnemyModifier[] = level <= 5
+    ? ["blessed"]
+    : MODIFIERS;
+
   const traits: EnemyTraits = {
     baseType: forceTraits?.baseType ?? pick(BASE_TYPES, rng),
-    size: forceTraits?.size ?? (isBoss ? pick(["large", "colossal"] as EnemySize[], rng) : pick(SIZES, rng)),
+    size: forceTraits?.size ?? (isBoss ? pick(["large", "colossal"] as EnemySize[], rng) : pick(sizePool, rng)),
     element: forceTraits?.element ?? pick(ELEMENTS, rng),
     role: forceTraits?.role ?? (isBoss ? pick(["striker", "tank", "caster"] as EnemyRole[], rng) : pick(ROLES, rng)),
-    modifier: forceTraits?.modifier ?? (isBoss ? pick(MODIFIERS, rng) : (rng() < 0.2 ? pick(MODIFIERS, rng) : null)),
+    // No modifiers for levels 1-4 trash mobs; bosses only get weak modifier until level 5
+    modifier: forceTraits?.modifier ?? (
+      isBoss
+        ? pick(bossModifierPool, rng)
+        : (level >= 5 && rng() < 0.2 ? pick(MODIFIERS, rng) : null)
+    ),
   };
 
   const profile = ROLE_STAT_PROFILE[traits.role];

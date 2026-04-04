@@ -9,6 +9,8 @@ import { cn } from "@/lib/utils";
 import type { CombatInitial } from "./CombatPanel";
 import type { ZoneGraph, FactionWeb, WorldHistory, GeneratedEnemy } from "@repo/engine";
 
+const MEDITATE_INTERVAL_MS = 6_000; // EQ tick = 6 seconds
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface CharacterSnapshot {
@@ -50,128 +52,13 @@ interface StartResponse {
 interface MeditateResponse {
   ok?: boolean;
   error?: string;
-  remainingMs?: number;
-  cooldownMs?: number;
   hp?: number;
-  maxHp?: number;
   power?: number;
-  maxPower?: number;
   hpHealed?: number;
   powerGained?: number;
   skillLevel?: number;
   leveledUp?: boolean;
   isMagicUser?: boolean;
-}
-
-// ─── MeditateButton ───────────────────────────────────────────────────────────
-
-function MeditateButton({
-  hp, maxHp, power, maxPower, isMagicUser,
-  onHeal,
-}: {
-  hp: number; maxHp: number; power: number; maxPower: number;
-  isMagicUser: boolean;
-  onHeal: (hp: number, power: number, msg: string) => void;
-}) {
-  const [cooldownMs,  setCooldownMs]  = useState(0);
-  const [remaining,   setRemaining]   = useState(0);
-  const [busy,        setBusy]        = useState(false);
-  const [flash,       setFlash]       = useState<string | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Tick down the cooldown display every second
-  useEffect(() => {
-    if (remaining <= 0) {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      return;
-    }
-    intervalRef.current = setInterval(() => {
-      setRemaining(r => {
-        const next = r - 1000;
-        if (next <= 0) {
-          if (intervalRef.current) clearInterval(intervalRef.current);
-          return 0;
-        }
-        return next;
-      });
-    }, 1000);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [remaining]);
-
-  async function handleMeditate() {
-    if (busy || remaining > 0) return;
-    setBusy(true);
-    try {
-      const res  = await fetch("/api/character/meditate", { method: "POST" });
-      const data = await res.json() as MeditateResponse;
-
-      if (res.status === 429 && data.remainingMs) {
-        // Already on cooldown (e.g. just refreshed the page)
-        setCooldownMs(data.cooldownMs ?? 90_000);
-        setRemaining(data.remainingMs);
-        return;
-      }
-      if (data.error && !data.ok) {
-        setFlash(`❌ ${data.error}`);
-        setTimeout(() => setFlash(null), 2500);
-        return;
-      }
-
-      const newHp    = data.hp    ?? hp;
-      const newPower = data.power ?? power;
-      const healed   = data.hpHealed    ?? 0;
-      const powered  = data.powerGained ?? 0;
-
-      let msg = `🧘 +${healed} HP`;
-      if (isMagicUser || powered > 0) msg += ` +${powered} Power`;
-      if (data.leveledUp) msg += ` · Meditation Lv.${data.skillLevel}!`;
-
-      onHeal(newHp, newPower, msg);
-
-      const cd = data.cooldownMs ?? 90_000;
-      setCooldownMs(cd);
-      setRemaining(cd);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const pct  = cooldownMs > 0 ? Math.max(0, remaining / cooldownMs) : 0;
-  const secs = Math.ceil(remaining / 1000);
-  const canMeditate = remaining <= 0 && !busy;
-
-  return (
-    <div className="flex items-center gap-2">
-      {flash && (
-        <span className="text-xs text-cyan-300 animate-pulse">{flash}</span>
-      )}
-      <div className="relative">
-        <button
-          onClick={() => void handleMeditate()}
-          disabled={!canMeditate}
-          className={cn(
-            "relative overflow-hidden text-xs px-3 py-1 rounded border transition-colors font-medium",
-            canMeditate
-              ? "border-cyan-500/60 text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20"
-              : "border-gray-700 text-gray-500 cursor-not-allowed"
-          )}
-        >
-          {/* cooldown progress fill */}
-          {pct > 0 && (
-            <span
-              className="absolute inset-0 bg-cyan-900/30 origin-left transition-none"
-              style={{ transform: `scaleX(${pct})` }}
-            />
-          )}
-          <span className="relative">
-            {busy           ? "..." :
-             remaining > 0  ? `🧘 ${secs}s` :
-                              "🧘 Meditate"}
-          </span>
-        </button>
-      </div>
-    </div>
-  );
 }
 
 // ─── GameView ─────────────────────────────────────────────────────────────────
@@ -191,8 +78,10 @@ export function GameView({ worldName, zoneGraph, factionWeb, history, character,
   const [charHp,       setCharHp]       = useState(character.hp);
   const [charPower,    setCharPower]    = useState(character.power);
 
-  // Flash message for meditate heals
-  const [healFlash, setHealFlash] = useState<string | null>(null);
+  // Passive meditation regen (runs every 6s when not in combat)
+  const meditateRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [meditating, setMeditating] = useState(false);
+  const [regenFlash, setRegenFlash] = useState<string | null>(null);
 
   // Called by WorldMap "Travel Here" button
   async function handleTravel(zoneId: string, zoneName: string) {
@@ -232,6 +121,39 @@ export function GameView({ worldName, zoneGraph, factionWeb, history, character,
     setCharHp(stats.hp);
   }, []);
 
+  // ── Passive meditation tick ──────────────────────────────────────────────────
+  const doMeditateTick = useCallback(async () => {
+    try {
+      const res  = await fetch("/api/character/meditate", { method: "POST" });
+      const data = await res.json() as MeditateResponse;
+      if (!data.ok) return;
+      if (data.hp    != null) setCharHp(data.hp);
+      if (data.power != null) setCharPower(data.power);
+      if ((data.hpHealed ?? 0) > 0 || (data.powerGained ?? 0) > 0) {
+        const parts: string[] = [];
+        if ((data.hpHealed ?? 0) > 0)    parts.push(`+${data.hpHealed} HP`);
+        if ((data.powerGained ?? 0) > 0) parts.push(`+${data.powerGained} ${isMagicUser ? "MP" : "SP"}`);
+        const msg = `🧘 ${parts.join("  ")}${data.leveledUp ? ` · Meditation Lv.${data.skillLevel}!` : ""}`;
+        setRegenFlash(msg);
+        setTimeout(() => setRegenFlash(null), 4_000);
+      }
+    } catch { /* ignore — passive, non-critical */ }
+  }, [isMagicUser]);
+
+  // Start/stop meditation interval based on whether player is in combat
+  useEffect(() => {
+    if (combat) {
+      // In combat — stop meditating
+      setMeditating(false);
+      if (meditateRef.current) { clearInterval(meditateRef.current); meditateRef.current = null; }
+    } else {
+      // Out of combat — start passive regen
+      setMeditating(true);
+      meditateRef.current = setInterval(() => void doMeditateTick(), MEDITATE_INTERVAL_MS);
+    }
+    return () => { if (meditateRef.current) { clearInterval(meditateRef.current); meditateRef.current = null; } };
+  }, [combat, doMeditateTick]);
+
   function handleFlee() {
     setCombat(null);
   }
@@ -239,13 +161,6 @@ export function GameView({ worldName, zoneGraph, factionWeb, history, character,
   const handleGoldUpdate = useCallback((gold: number) => {
     setCharGold(gold);
   }, []);
-
-  function handleMeditateHeal(newHp: number, newPower: number, msg: string) {
-    setCharHp(newHp);
-    setCharPower(newPower);
-    setHealFlash(msg);
-    setTimeout(() => setHealFlash(null), 3000);
-  }
 
   const hpPct    = Math.max(0, (charHp    / character.maxHp)    * 100);
   const powerPct = Math.max(0, (charPower / character.maxPower) * 100);
@@ -301,19 +216,17 @@ export function GameView({ worldName, zoneGraph, factionWeb, history, character,
 
         <span className="text-amber-400">{charGold}g</span>
 
-        {/* Meditate button */}
+        {/* Meditation status */}
         <div className="ml-auto flex items-center gap-3">
-          {healFlash && (
-            <span className="text-xs text-cyan-300 animate-pulse">{healFlash}</span>
+          {regenFlash && (
+            <span className="text-xs text-cyan-300 animate-pulse">{regenFlash}</span>
           )}
-          <MeditateButton
-            hp={charHp}
-            maxHp={character.maxHp}
-            power={charPower}
-            maxPower={character.maxPower}
-            isMagicUser={isMagicUser}
-            onHeal={handleMeditateHeal}
-          />
+          {meditating && !regenFlash && (
+            <span className="text-xs text-cyan-500/60 animate-pulse">🧘 Meditating...</span>
+          )}
+          {!meditating && (
+            <span className="text-xs text-gray-500">⚔️ In Combat</span>
+          )}
         </div>
       </div>
 
