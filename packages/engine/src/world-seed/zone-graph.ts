@@ -69,8 +69,10 @@ export function generateZoneGraph(rng: Rng, factions: Faction[]): ZoneGraph {
     const noun = pick(BIOME_NOUNS[biome], rng);
     const name = `${prefix} ${noun}`;
 
-    const levelMin = minLevel + randInt(0, 3, rng);
-    const levelMax = maxLevel + randInt(-2, 2, rng);
+    // Zone 0 is always the starter zone — force level 1 floor so new characters
+    // are never immediately overwhelmed. All other zones follow the tier table.
+    const levelMin = i === 0 ? 1 : minLevel + randInt(0, 3, rng);
+    const levelMax = i === 0 ? Math.max(8, maxLevel + randInt(-2, 2, rng)) : maxLevel + randInt(-2, 2, rng);
     const bossTitle = pick(BIOME_BOSS_TITLES[biome], rng);
     const bossName = `${pick(["Lord", "Lady", "Elder", "High", "Ancient", "The"], rng)} ${generateName(rng)}`;
 

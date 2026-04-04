@@ -317,7 +317,7 @@ export async function POST() {
 
     // Spawn next enemy
     const nextRng    = mulberry32((Date.now() + tick * 31_337) >>> 0);
-    const nextLevel  = Math.min(zoneMax, Math.max(zoneMin, newLevel));
+    const nextLevel  = Math.min(zoneMax, Math.max(1, newLevel));
     nextEnemy = generateEnemy(state.zoneId, nextLevel, false, nextRng);
     enemyHp   = nextEnemy.hp;
     effects   = [];
@@ -332,7 +332,7 @@ export async function POST() {
     newEntries.push(`💀 Defeated! -${xpLoss} XP. Respawning...`);
 
     const respawnRng = mulberry32((Date.now() + tick * 99_991) >>> 0);
-    const nextLevel  = Math.min(zoneMax, Math.max(zoneMin, newLevel));
+    const nextLevel  = Math.min(zoneMax, Math.max(1, newLevel));
     nextEnemy = generateEnemy(state.zoneId, nextLevel, false, respawnRng);
     enemyHp   = nextEnemy.hp;
     effects   = [];

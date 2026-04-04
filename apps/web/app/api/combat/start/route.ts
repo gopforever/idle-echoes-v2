@@ -35,9 +35,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Zone level too high" }, { status: 403 });
   }
 
-  // Generate first enemy — level clamped to zone range
+  // Enemy level scales WITH the player (capped at zone max).
+  // A level 1 character in a level 4-14 zone still fights level 1 enemies.
+  // This prevents new characters from being one-shot by their own starter zone.
   const rng = mulberry32(Date.now() >>> 0);
-  const enemyLevel = Math.min(zone.levelRange[1], Math.max(zone.levelRange[0], char.level));
+  const enemyLevel = Math.min(zone.levelRange[1], Math.max(1, char.level));
   const enemy = generateEnemy(zoneId, enemyLevel, false, rng);
 
   // Heal player to max on zone entry, update location
