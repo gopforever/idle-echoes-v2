@@ -4,15 +4,15 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./world-seed": "./src/world-seed/index.ts",
-    "./enemy-factory": "./src/enemy-factory/index.ts",
-    "./item-factory": "./src/item-factory/index.ts",
-    "./formulas": "./src/formulas/index.ts",
-    "./ghost-world": "./src/ghost-world/index.ts"
+    ".": "./dist/index.js",
+    "./world-seed": "./dist/world-seed/index.js",
+    "./enemy-factory": "./dist/enemy-factory/index.js",
+    "./item-factory": "./dist/item-factory/index.js",
+    "./formulas": "./dist/formulas/index.js",
+    "./ghost-world": "./dist/ghost-world/index.js"
   },
   "scripts": {
-    "build": "tsc --noEmit",
+    "build": "tsc",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
