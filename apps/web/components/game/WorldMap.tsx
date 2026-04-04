@@ -11,6 +11,8 @@ interface Props {
   currentZoneId: string;
   characterLevel: number;
   seed: number;
+  onTravel?: (zoneId: string, zoneName: string) => void;
+  isTraveling?: boolean;
 }
 
 const BIOME_COLORS: Record<string, { bg: string; border: string; text: string }> = {
@@ -32,7 +34,7 @@ const BIOME_ICON: Record<string, string> = {
   undead: "💀", celestial: "⭐",
 };
 
-export function WorldMap({ worldName, zoneGraph, factionWeb, history, currentZoneId, characterLevel, seed }: Props) {
+export function WorldMap({ worldName, zoneGraph, factionWeb, history, currentZoneId, characterLevel, seed, onTravel, isTraveling }: Props) {
   const [selectedZone, setSelectedZone] = useState<Zone | null>(null);
 
   const factionMap = new Map(factionWeb.factions.map(f => [f.id, f]));
@@ -151,12 +153,19 @@ export function WorldMap({ worldName, zoneGraph, factionWeb, history, currentZon
               </div>
               <button
                 className="w-full py-2 rounded-lg bg-amber-500/20 border border-amber-500/50 text-amber-300 text-sm font-medium hover:bg-amber-500/30 transition-colors disabled:opacity-40"
-                disabled={isZoneLocked(selectedZone)}
+                disabled={isZoneLocked(selectedZone) || isTraveling}
+                onClick={() => {
+                  if (!isZoneLocked(selectedZone) && onTravel) {
+                    onTravel(selectedZone.id, selectedZone.name);
+                  }
+                }}
               >
-                {isZoneLocked(selectedZone)
+                {isTraveling
+                  ? "Traveling..."
+                  : isZoneLocked(selectedZone)
                   ? `Requires Level ${selectedZone.levelRange[0]}`
                   : selectedZone.id === currentZoneId
-                  ? "Currently Here"
+                  ? "⚔️ Fight Here"
                   : "Travel Here"}
               </button>
             </div>
