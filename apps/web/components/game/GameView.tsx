@@ -7,6 +7,7 @@ import { SkillsAAPanel } from "./SkillsAAPanel";
 import { WorldEventsFeed } from "./WorldEventsFeed";
 import { cn } from "@/lib/utils";
 import type { CombatInitial } from "./CombatPanel";
+import type { ActiveAAResult } from "./SkillsAAPanel";
 import type { ZoneGraph, FactionWeb, WorldHistory, GeneratedEnemy } from "@repo/engine";
 
 const MEDITATE_INTERVAL_MS = 6_000; // EQ tick = 6 seconds
@@ -27,6 +28,7 @@ export interface CharacterSnapshot {
   power: number;
   maxPower: number;
   currentZoneId: string;
+  ascensions: number;
 }
 
 interface Props {
@@ -61,6 +63,13 @@ interface MeditateResponse {
   isMagicUser?: boolean;
 }
 
+interface AscendResponse {
+  ok?: boolean;
+  error?: string;
+  ascensions?: number;
+  message?: string;
+}
+
 // ─── GameView ─────────────────────────────────────────────────────────────────
 
 export function GameView({ worldName, zoneGraph, factionWeb, history, character, seed }: Props) {
@@ -77,6 +86,8 @@ export function GameView({ worldName, zoneGraph, factionWeb, history, character,
   const [charGold,     setCharGold]     = useState(character.gold);
   const [charHp,       setCharHp]       = useState(character.hp);
   const [charPower,    setCharPower]    = useState(character.power);
+  const [aaCooldowns,  setAaCooldowns]  = useState<Record<string, number>>({});
+  const [isAscending,  setIsAscending]  = useState(false);
 
   // Passive meditation regen (runs every 6s when not in combat)
   const meditateRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -121,6 +132,15 @@ export function GameView({ worldName, zoneGraph, factionWeb, history, character,
     setCharHp(stats.hp);
   }, []);
 
+  // Handle active AA ability used during combat
+  const handleActiveAAUsed = useCallback((nodeId: string, result: ActiveAAResult) => {
+    if (result.hp != null) setCharHp(result.hp);
+    if (result.power != null) setCharPower(result.power);
+    if (result.cooldownUntil != null) {
+      setAaCooldowns(prev => ({ ...prev, [nodeId]: result.cooldownUntil! }));
+    }
+  }, []);
+
   // ── Passive meditation tick ──────────────────────────────────────────────────
   const doMeditateTick = useCallback(async () => {
     try {
@@ -161,6 +181,24 @@ export function GameView({ worldName, zoneGraph, factionWeb, history, character,
   const handleGoldUpdate = useCallback((gold: number) => {
     setCharGold(gold);
   }, []);
+
+  // Ascend handler
+  async function handleAscend() {
+    if (!confirm("Ascend? Your level resets to 1, skills reduced by 30%, and you gain permanent echo bonuses.")) return;
+    setIsAscending(true);
+    try {
+      const res = await fetch("/api/character/ascend", { method: "POST" });
+      const data = await res.json() as AscendResponse;
+      if (data.ok) {
+        alert(`${data.message ?? "Ascended!"} (Ascension #${data.ascensions ?? "?"})`);
+        window.location.reload();
+      } else {
+        alert(data.error ?? "Failed to ascend");
+      }
+    } finally {
+      setIsAscending(false);
+    }
+  }
 
   const hpPct    = Math.max(0, (charHp    / character.maxHp)    * 100);
   const powerPct = Math.max(0, (charPower / character.maxPower) * 100);
@@ -216,6 +254,11 @@ export function GameView({ worldName, zoneGraph, factionWeb, history, character,
 
         <span className="text-amber-400">{charGold}g</span>
 
+        {/* Ascensions badge */}
+        {(character.ascensions ?? 0) > 0 && (
+          <span className="text-xs text-purple-400">✦ ×{character.ascensions}</span>
+        )}
+
         {/* Meditation status */}
         <div className="ml-auto flex items-center gap-3">
           {regenFlash && (
@@ -226,6 +269,17 @@ export function GameView({ worldName, zoneGraph, factionWeb, history, character,
           )}
           {!meditating && (
             <span className="text-xs text-gray-500">⚔️ In Combat</span>
+          )}
+
+          {/* Ascend button — only at level 60 */}
+          {charLevel >= 60 && (
+            <button
+              onClick={() => void handleAscend()}
+              disabled={isAscending}
+              className="text-xs px-2 py-1 rounded border border-purple-500/50 text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 transition-colors disabled:opacity-40"
+            >
+              {isAscending ? "..." : "🌀 Ascend"}
+            </button>
           )}
         </div>
       </div>
@@ -279,7 +333,14 @@ export function GameView({ worldName, zoneGraph, factionWeb, history, character,
           />
         </div>
         <div className="space-y-4">
-          <SkillsAAPanel />
+          <SkillsAAPanel
+            archetype={character.archetype}
+            className={character.className}
+            ascensions={character.ascensions ?? 0}
+            inCombat={combat !== null}
+            aaCooldowns={aaCooldowns}
+            onActiveAAUsed={handleActiveAAUsed}
+          />
           <WorldEventsFeed />
         </div>
       </div>

@@ -56,6 +56,7 @@ export default async function WorldPage() {
             power:         character.power,
             maxPower:      character.maxPower,
             currentZoneId: character.currentZoneId,
+            ascensions:    character.ascensions ?? 0,
           }}
         />
       </main>

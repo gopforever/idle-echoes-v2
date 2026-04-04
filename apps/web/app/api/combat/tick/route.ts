@@ -89,7 +89,7 @@ function calcDefenseRating(
 interface StatusEffect {
   id: string;
   name: string;
-  type: "dot" | "stun" | "slow" | "shield" | "frenzy";
+  type: "dot" | "stun" | "slow" | "shield" | "frenzy" | "invulnerable";
   value: number;
   remainingTicks: number;
 }
@@ -161,14 +161,19 @@ export async function POST() {
   const defenseSkillLv = skills["defense"]?.level ?? 1;
   const archerySkillLv = skills["archery"]?.level ?? 1;
 
-  const playerStr = char.strength + (gearStats.strength ?? 0);
-  const playerAgi = char.agility  + (gearStats.agility  ?? 0);
+  // Include AA stat bonuses in player stats
+  const playerStr = char.strength + (gearStats.strength ?? 0) + Math.floor(aaBonus.strBonus);
+  const playerAgi = char.agility  + (gearStats.agility  ?? 0) + Math.floor(aaBonus.agiBonus);
 
   const wrath         = calcWrath(combatSkillLv, playerStr, gearStats.attackRating ?? 0);
   const playerDefense = calcDefenseRating(defenseSkillLv, playerAgi, gearStats.defenseRating ?? 0);
 
+  // Power tracking
+  let newPower = char.power;
+
   // ── Phase 1: Apply active status effects ────────────────────────────────────
   const isStunned = effects.some(e => e.type === "stun");
+  const isInvulnerable = effects.some(e => e.type === "invulnerable");
   const slowMult  = effects.filter(e => e.type === "slow")
     .reduce((acc, e) => acc * (1 - e.value), 1.0);
   const frenzyAdd = effects.filter(e => e.type === "frenzy")
@@ -222,11 +227,17 @@ export async function POST() {
         * slowMult
         * (isCrit ? critMult : 1)
         * (1 + hasteBonus)
+        * (1 + frenzyAdd)
         * skillBonus.damageMult
         * aaBonus.damageMult
       );
       const dealt = Math.max(1, Math.floor(rawDmg * (1 - enemy.mitigation)));
       enemyHp = Math.max(0, enemyHp - dealt);
+
+      // Leech: restore HP based on damage dealt
+      if (aaBonus.leechPct > 0) {
+        playerHp = Math.min(char.maxHp, playerHp + Math.floor(dealt * aaBonus.leechPct));
+      }
 
       skillXpGains["combat"]  = (skillXpGains["combat"]  ?? 0) + 8;
       if (isCrit) skillXpGains["archery"] = (skillXpGains["archery"] ?? 0) + 20;
@@ -235,6 +246,20 @@ export async function POST() {
       newEntries.push(isCrit
         ? `${prefix}⚔️ CRIT! You hit ${enemy.name} for ${dealt}! (Wrath: ${wrath})`
         : `${prefix}⚔️ You hit ${enemy.name} for ${dealt}.`);
+
+      // Flurry: bonus attack after main hit
+      if (aaBonus.flurryChance > 0 && !isStunned && enemyHp > 0 && rng() < aaBonus.flurryChance) {
+        const flurryDmg = Math.max(1, Math.floor((dmgMin + rng() * (dmgMax - dmgMin)) * 0.5 * (1 - enemy.mitigation)));
+        enemyHp = Math.max(0, enemyHp - flurryDmg);
+        skillXpGains["combat"] = (skillXpGains["combat"] ?? 0) + 4;
+        newEntries.push(`⚡ Flurry! +${flurryDmg} bonus hit.`);
+      }
+
+      // Finishing blow: execute enemy below 10% HP
+      if (enemyHp > 0 && enemyHp / enemy.maxHp < 0.10 && aaBonus.finishingBlowChance > 0 && rng() < aaBonus.finishingBlowChance) {
+        enemyHp = 0;
+        newEntries.push(`⚡ FINISHING BLOW! ${enemy.name} slain!`);
+      }
     } else {
       // Miss — still award small combat XP for the attempt
       skillXpGains["combat"] = (skillXpGains["combat"] ?? 0) + 3;
@@ -304,47 +329,70 @@ export async function POST() {
 
   // ── Phase 4: Enemy attacks player (EQ-style defense check) ──────────────────
   if (enemyHp > 0 && playerHp > 0) {
-    // Enemy d20 hit check vs player defense
-    const enemyWrath   = Math.floor(enemy.attackRating / 4) + enemy.level;
-    const eD20         = Math.floor(rng() * 20) + 1;
-    const eHitRoll     = eD20 + Math.floor(enemyWrath / 8);
-    const eHitTarget   = Math.floor(playerDefense / 5);
-    const enemyHit     = eHitRoll > eHitTarget;
-
-    if (!enemyHit) {
-      // Full dodge / parry
-      skillXpGains["defense"] = (skillXpGains["defense"] ?? 0) + 20;
-      newEntries.push(`🛡️ You parry ${enemy.name}'s attack! (Defense: ${playerDefense})`);
+    if (isInvulnerable) {
+      newEntries.push(`🌟 Invulnerable! ${enemy.name}'s attack is blocked!`);
     } else {
-      // Mitigation check — EQ: partial mitigation from AC/stamina
-      const charStats = {
-        level:         char.level,
-        strength:      playerStr,
-        agility:       playerAgi,
-        stamina:       char.stamina   + (gearStats.stamina   ?? 0),
-        intelligence:  char.intelligence + (gearStats.intelligence ?? 0),
-        wisdom:        char.wisdom    + (gearStats.wisdom    ?? 0),
-        charisma:      char.charisma  + (gearStats.charisma  ?? 0),
-        defenseRating: gearStats.defenseRating,
-        mitigation:    gearStats.mitigation,
-        avoidance:     gearStats.avoidance,
-      };
-      const mitigation = Math.min(0.85,
-        effectiveMitigation(charStats) + skillBonus.mitigationBonus + aaBonus.mitigationBonus
-      );
+      // Enemy d20 hit check vs player defense
+      const enemyWrath   = Math.floor(enemy.attackRating / 4) + enemy.level;
+      const eD20         = Math.floor(rng() * 20) + 1;
+      const eHitRoll     = eD20 + Math.floor(enemyWrath / 8);
+      const eHitTarget   = Math.floor(playerDefense / 5);
+      const enemyHit     = eHitRoll > eHitTarget;
 
-      const rawDmg = Math.floor((enemy.dmgMin + rng() * (enemy.dmgMax - enemy.dmgMin)) * (1 + frenzyAdd));
-      const dealt  = Math.max(1, Math.floor(rawDmg * (1 - mitigation)));
-      playerHp = Math.max(0, playerHp - dealt);
+      if (!enemyHit) {
+        // Full dodge / parry
+        skillXpGains["defense"] = (skillXpGains["defense"] ?? 0) + 20;
+        newEntries.push(`🛡️ You parry ${enemy.name}'s attack! (Defense: ${playerDefense})`);
+      } else {
+        // Mitigation check — EQ: partial mitigation from AC/stamina
+        const charStats = {
+          level:         char.level,
+          strength:      playerStr,
+          agility:       playerAgi,
+          stamina:       char.stamina   + (gearStats.stamina   ?? 0) + Math.floor(aaBonus.staBonus),
+          intelligence:  char.intelligence + (gearStats.intelligence ?? 0) + Math.floor(aaBonus.intBonus),
+          wisdom:        char.wisdom    + (gearStats.wisdom    ?? 0) + Math.floor(aaBonus.wisBonus),
+          charisma:      char.charisma  + (gearStats.charisma  ?? 0),
+          defenseRating: gearStats.defenseRating,
+          mitigation:    gearStats.mitigation,
+          avoidance:     gearStats.avoidance,
+        };
+        const mitigation = Math.min(0.85,
+          effectiveMitigation(charStats, defenseSkillLv) + skillBonus.mitigationBonus + aaBonus.mitigationBonus
+        );
 
-      skillXpGains["defense"] = (skillXpGains["defense"] ?? 0) + 5;
-      if (playerHp / char.maxHp < 0.25) skillXpGains["survival"] = (skillXpGains["survival"] ?? 0) + 15;
-      newEntries.push(`💢 ${enemy.name} hits you for ${dealt}. (mit: ${Math.round(mitigation * 100)}%)`);
+        const rawDmg = Math.floor((enemy.dmgMin + rng() * (enemy.dmgMax - enemy.dmgMin)) * (1 + frenzyAdd));
+        const avoided = !enemyHit;
+        void avoided; // used below for reflect
+        const dealt  = Math.max(1, Math.floor(rawDmg * (1 - mitigation)));
+        playerHp = Math.max(0, playerHp - dealt);
+
+        skillXpGains["defense"] = (skillXpGains["defense"] ?? 0) + 5;
+        if (playerHp / char.maxHp < 0.25) skillXpGains["survival"] = (skillXpGains["survival"] ?? 0) + 15;
+        newEntries.push(`💢 ${enemy.name} hits you for ${dealt}. (mit: ${Math.round(mitigation * 100)}%)`);
+
+        // Reflect damage back to enemy
+        if (aaBonus.reflectPct > 0) {
+          const reflected = Math.floor(dealt * aaBonus.reflectPct);
+          if (reflected > 0) {
+            enemyHp = Math.max(0, enemyHp - reflected);
+            newEntries.push(`🔄 ${reflected} reflected!`);
+          }
+        }
+      }
     }
 
     // Passive magic XP every combat tick
     skillXpGains["magic"] = (skillXpGains["magic"] ?? 0) + 3;
     skillXpGains["luck"]  = (skillXpGains["luck"]  ?? 0) + 1;
+
+    // Passive AA HP and Power regen
+    if (aaBonus.hpRegenPerTick > 0 && playerHp > 0) {
+      playerHp = Math.min(char.maxHp, playerHp + aaBonus.hpRegenPerTick);
+    }
+    if (aaBonus.powerRegenPerTick > 0) {
+      newPower = Math.min(char.maxPower, newPower + aaBonus.powerRegenPerTick);
+    }
   }
 
   // ── Phase 5: Outcome resolution ──────────────────────────────────────────────
@@ -368,7 +416,7 @@ export async function POST() {
     // ── Enemy defeated ────────────────────────────────────────────────────────
     const baseXp     = xpReward(enemy.level, char.level);
     const baseGold   = enemy.goldReward;
-    const earnedXp   = Math.floor(baseXp   * skillBonus.xpMult);
+    const earnedXp   = Math.floor(baseXp   * skillBonus.xpMult * aaBonus.xpMult);
     const earnedGold = Math.floor(baseGold * skillBonus.goldMult * aaBonus.goldMult);
     newTotalKills++;
     if (enemy.isBoss) newBossKills++;
@@ -495,6 +543,7 @@ export async function POST() {
   // ── Phase 7: Persist ──────────────────────────────────────────────────────────
   await db.update(charactersTable).set({
     hp:          finalPlayerHp,
+    power:       newPower,
     xp:          newXp,
     level:       newLevel,
     xpToNext:    newXpToNext,
@@ -525,6 +574,7 @@ export async function POST() {
     tick,
     playerHp:    finalPlayerHp,
     playerMaxHp: char.maxHp,
+    power:       newPower,
     enemyHp,
     enemy:       currentEnemy,
     statusEffects: effects,

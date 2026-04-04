@@ -51,6 +51,7 @@ export const charactersTable = pgTable("characters", {
   // AA tree: { nodeId → rank }
   aaNodes:      jsonb("aa_nodes").notNull().default({}),
   aaPoints:     integer("aa_points").notNull().default(0),
+  aaCooldowns:  jsonb("aa_cooldowns").notNull().default({}),
 
   // Lifetime stats
   totalKills:   integer("total_kills").notNull().default(0),
