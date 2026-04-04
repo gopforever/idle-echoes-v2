@@ -2,7 +2,7 @@ import {
   pgTable, text, integer, real, boolean,
   jsonb, timestamp, index,
 } from "drizzle-orm/pg-core";
-import { worldsTable } from "./worlds.js";
+import { worldsTable } from "./worlds";
 
 // ─── Characters ───────────────────────────────────────────────────────────────
 

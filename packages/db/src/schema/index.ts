@@ -1,2 +1,2 @@
-export * from "./worlds.js";
-export * from "./characters.js";
+export * from "./worlds";
+export * from "./characters";

@@ -71,5 +71,5 @@ export async function GET(_req: NextRequest) {
     }))
   );
 
-  return NextResponse.json({ id: worldId, seed, name: generated.history.worldName, ...generated });
+  return NextResponse.json({ id: worldId, name: generated.history.worldName, zoneGraph: generated.zoneGraph, factionWeb: generated.factionWeb, history: generated.history });
 }
