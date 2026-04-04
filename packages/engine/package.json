@@ -1,0 +1,21 @@
+{
+  "name": "@repo/engine",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./world-seed": "./src/world-seed/index.ts",
+    "./enemy-factory": "./src/enemy-factory/index.ts",
+    "./item-factory": "./src/item-factory/index.ts",
+    "./formulas": "./src/formulas/index.ts",
+    "./ghost-world": "./src/ghost-world/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.2"
+  }
+}

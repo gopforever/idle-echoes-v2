@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222 20% 8%;
+    --foreground: 40 30% 90%;
+    --card: 222 20% 11%;
+    --card-foreground: 40 30% 90%;
+    --border: 222 15% 20%;
+    --input: 222 15% 15%;
+    --primary: 38 92% 50%;
+    --primary-foreground: 222 20% 8%;
+    --muted: 222 15% 18%;
+    --muted-foreground: 40 15% 55%;
+    --accent: 38 80% 40%;
+    --accent-foreground: 40 30% 90%;
+  }
+
+  * { @apply border-border; }
+  body {
+    @apply bg-background text-foreground;
+    font-family: Georgia, 'Times New Roman', serif;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { @apply bg-background; }
+  ::-webkit-scrollbar-thumb { @apply bg-border rounded-full; }
+}
+
+@layer components {
+  .game-panel {
+    @apply bg-card border border-border rounded-lg p-4;
+  }
+  .rarity-shimmer {
+    background: linear-gradient(90deg, transparent 0%, currentColor 50%, transparent 100%);
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+}
