@@ -46,12 +46,15 @@ export default async function WorldPage() {
             id:            character.id,
             name:          character.name,
             className:     character.className,
+            archetype:     character.archetype,
             level:         character.level,
             xp:            character.xp,
             xpToNext:      character.xpToNext,
             gold:          character.gold,
             hp:            character.hp,
             maxHp:         character.maxHp,
+            power:         character.power,
+            maxPower:      character.maxPower,
             currentZoneId: character.currentZoneId,
           }}
         />
