@@ -3,6 +3,8 @@ import { useState, useCallback } from "react";
 import { WorldMap } from "./WorldMap";
 import { CombatPanel } from "./CombatPanel";
 import { InventoryPanel } from "./InventoryPanel";
+import { SkillsAAPanel } from "./SkillsAAPanel";
+import { WorldEventsFeed } from "./WorldEventsFeed";
 import type { CombatInitial } from "./CombatPanel";
 import type { ZoneGraph, FactionWeb, WorldHistory, GeneratedEnemy } from "@repo/engine";
 
@@ -171,12 +173,20 @@ export function GameView({ worldName, zoneGraph, factionWeb, history, character,
           )}
         </div>
       </div>
-      {/* Inventory / Paperdoll / Merchant — always visible below */}
-      <InventoryPanel
-        currentZoneId={currentZoneId}
-        characterLevel={charLevel}
-        onGoldUpdate={handleGoldUpdate}
-      />
+      {/* Bottom panels: Inventory + Skills/AA side by side, World Events below */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <InventoryPanel
+            currentZoneId={currentZoneId}
+            characterLevel={charLevel}
+            onGoldUpdate={handleGoldUpdate}
+          />
+        </div>
+        <div className="space-y-4">
+          <SkillsAAPanel />
+          <WorldEventsFeed />
+        </div>
+      </div>
     </div>
   );
 }

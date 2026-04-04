@@ -6,9 +6,14 @@ import {
   generateEnemy, rollLoot, mulberry32, generateWorldUniqueItem,
   effectiveMitigation, effectiveAvoidance,
   xpToLevel, xpReward,
+  getSkillBonuses, awardSkillXp, initSkill,
+  getAABonuses, AA_KILLS_PER_POINT,
 } from "@repo/engine";
 import { createId } from "@paralleldrive/cuid2";
-import type { GeneratedEnemy, ZoneGraph, GeneratedItem, ItemStats } from "@repo/engine";
+import type { GeneratedEnemy, ZoneGraph, GeneratedItem, ItemStats, CharacterSkills, SkillId } from "@repo/engine";
+
+// ─── Boss spawn threshold ─────────────────────────────────────────────────────
+const BOSS_EVERY_N_KILLS = 15;
 
 // ─── Gear stat aggregation ────────────────────────────────────────────────────
 
@@ -111,27 +116,47 @@ export async function POST() {
   effects = effects.filter(e => e.remainingTicks > 0);
 
   // ── Phase 2: Player attacks enemy ───────────────────────────────────────────
-  const gearStats = sumGearStats(char.gear as Record<string, unknown>);
-  if (!isStunned && enemyHp > 0) {
-    const baseCrit = 0.05 + char.level * 0.001 + (gearStats.critChance ?? 0) / 100;
-    const isCrit   = rng() < Math.min(0.60, baseCrit);
-    const critMult = 1.5 + (gearStats.critBonus ?? 0) / 100;
-    const hasteRed = Math.min(0.50, (gearStats.haste ?? 0) / 200);
+  const gearStats  = sumGearStats(char.gear as Record<string, unknown>);
+  const skills     = (char.skills as unknown as CharacterSkills) ?? {};
+  const aaNodes    = (char.aaNodes as Record<string, number>) ?? {};
+  const skillBonus = getSkillBonuses(skills);
+  const aaBonus    = getAABonuses(aaNodes);
 
-    // Weapon damage — use equipped weapon if available, else str-based
-    const dmgMin = gearStats.weaponDamageMin ?? Math.max(1, char.strength * 1.2 + char.level * 2);
-    const dmgMax = gearStats.weaponDamageMax ?? Math.max(2, char.strength * 2.5 + char.level * 4);
-    const atkBonus = 1 + (gearStats.attackRating ?? 0) / 200;
-    const speedBonus = 1 + hasteRed; // haste = more attacks per tick
+  // Track skill XP earned this tick
+  const skillXpGains: Partial<Record<SkillId, number>> = {};
+
+  if (!isStunned && enemyHp > 0) {
+    const baseCrit   = 0.05 + char.level * 0.001
+      + (gearStats.critChance ?? 0) / 100
+      + skillBonus.critChanceBonus
+      + aaBonus.critChanceBonus;
+    const isCrit     = rng() < Math.min(0.60, baseCrit);
+    const critMult   = (1.5 + (gearStats.critBonus ?? 0) / 100) * skillBonus.critDamageMult;
+    const hasteBonus = Math.min(0.50, (gearStats.haste ?? 0) / 200) * aaBonus.hasteMult;
+
+    const dmgMin     = gearStats.weaponDamageMin ?? Math.max(1, char.strength * 1.2 + char.level * 2);
+    const dmgMax     = gearStats.weaponDamageMax ?? Math.max(2, char.strength * 2.5 + char.level * 4);
+    const atkBonus   = 1 + (gearStats.attackRating ?? 0) / 200;
 
     const rawDmg = Math.floor(
-      (dmgMin + rng() * (dmgMax - dmgMin)) * slowMult * (isCrit ? critMult : 1) * atkBonus * speedBonus
+      (dmgMin + rng() * (dmgMax - dmgMin))
+      * slowMult
+      * (isCrit ? critMult : 1)
+      * atkBonus
+      * (1 + hasteBonus)
+      * skillBonus.damageMult
+      * aaBonus.damageMult
     );
     const dealt = Math.max(1, Math.floor(rawDmg * (1 - enemy.mitigation)));
     enemyHp = Math.max(0, enemyHp - dealt);
+
+    skillXpGains["combat"] = (skillXpGains["combat"] ?? 0) + 8;
+    if (isCrit) skillXpGains["archery"] = (skillXpGains["archery"] ?? 0) + 20;
+
+    const prefix = enemy.isBoss ? `👑 ` : ``;
     newEntries.push(isCrit
-      ? `⚔️ CRIT! You hit ${enemy.name} for ${dealt}!`
-      : `⚔️ You hit ${enemy.name} for ${dealt}.`);
+      ? `${prefix}⚔️ CRIT! You hit ${enemy.name} for ${dealt}!`
+      : `${prefix}⚔️ You hit ${enemy.name} for ${dealt}.`);
   } else if (isStunned) {
     newEntries.push(`😵 Stunned — you cannot act!`);
   }
@@ -208,18 +233,27 @@ export async function POST() {
       mitigation:    gearStats.mitigation,
       avoidance:     gearStats.avoidance,
     };
-    const avoidance  = effectiveAvoidance(charStats);
-    const mitigation = effectiveMitigation(charStats);
+    const avoidance  = Math.min(0.75,
+      effectiveAvoidance(charStats) + skillBonus.avoidanceBonus + aaBonus.mitigationBonus * 0.5
+    );
+    const mitigation = Math.min(0.85,
+      effectiveMitigation(charStats) + skillBonus.mitigationBonus + aaBonus.mitigationBonus
+    );
     const avoided    = rng() < avoidance;
 
     if (avoided) {
+      skillXpGains["defense"] = (skillXpGains["defense"] ?? 0) + 15;
       newEntries.push(`🛡️ You dodge ${enemy.name}'s attack!`);
     } else {
-      const rawDmg  = Math.floor((enemy.dmgMin + rng() * (enemy.dmgMax - enemy.dmgMin)) * (1 + frenzyAdd));
-      const dealt   = Math.max(1, Math.floor(rawDmg * (1 - mitigation)));
+      const rawDmg = Math.floor((enemy.dmgMin + rng() * (enemy.dmgMax - enemy.dmgMin)) * (1 + frenzyAdd));
+      const dealt  = Math.max(1, Math.floor(rawDmg * (1 - mitigation)));
       playerHp = Math.max(0, playerHp - dealt);
+      skillXpGains["defense"] = (skillXpGains["defense"] ?? 0) + 5;
+      if (playerHp / char.maxHp < 0.25) skillXpGains["survival"] = (skillXpGains["survival"] ?? 0) + 15;
       newEntries.push(`💢 ${enemy.name} hits you for ${dealt}.`);
     }
+    // Passive magic skill XP every tick of combat
+    skillXpGains["magic"] = (skillXpGains["magic"] ?? 0) + 3;
   }
 
   // ── Phase 5: Outcome resolution ──────────────────────────────────────────────
@@ -240,14 +274,24 @@ export async function POST() {
 
   if (enemyHp <= 0) {
     // ── Enemy defeated ───────────────────────────────────────────────────────
-    const earnedXp   = xpReward(enemy.level, char.level);
-    const earnedGold = enemy.goldReward;
+    const baseXp     = xpReward(enemy.level, char.level);
+    const baseGold   = enemy.goldReward;
+    const earnedXp   = Math.floor(baseXp   * skillBonus.xpMult);
+    const earnedGold = Math.floor(baseGold * skillBonus.goldMult * aaBonus.goldMult);
     newTotalKills++;
     if (enemy.isBoss) newBossKills++;
     newGold      += earnedGold;
     newGoldEarned += earnedGold;
     newXp        += earnedXp;
-    newEntries.push(`🏆 ${enemy.name} defeated! +${earnedXp} XP  +${earnedGold}g`);
+
+    skillXpGains["combat"]   = (skillXpGains["combat"]   ?? 0) + 40;
+    skillXpGains["luck"]     = (skillXpGains["luck"]     ?? 0) + 15;
+    if (enemy.isBoss) {
+      skillXpGains["survival"] = (skillXpGains["survival"] ?? 0) + 50;
+      newEntries.push(`👑 BOSS DEFEATED! ${enemy.name} falls! +${earnedXp} XP  +${earnedGold}g`);
+    } else {
+      newEntries.push(`🏆 ${enemy.name} defeated! +${earnedXp} XP  +${earnedGold}g`);
+    }
 
     // Level-up loop
     while (newXp >= newXpToNext) {
@@ -315,13 +359,27 @@ export async function POST() {
       }
     }
 
-    // Spawn next enemy
-    const nextRng    = mulberry32((Date.now() + tick * 31_337) >>> 0);
-    const nextLevel  = Math.min(zoneMax, Math.max(1, newLevel));
-    nextEnemy = generateEnemy(state.zoneId, nextLevel, false, nextRng);
+    // ── AA point award ────────────────────────────────────────────────────────
+    const prevAaPoints = char.aaPoints + (newTotalKills - char.totalKills - 1); // kills before this one
+    const newAaPoints  = Math.floor(newTotalKills / AA_KILLS_PER_POINT);
+    const aaPointsEarned = newAaPoints - Math.floor((newTotalKills - 1) / AA_KILLS_PER_POINT);
+    if (aaPointsEarned > 0) {
+      newEntries.push(`✨ AA Point earned! (${char.aaPoints + aaPointsEarned} total)`);
+    }
+    void prevAaPoints; // suppress unused warning
+
+    // ── Spawn next enemy — boss every N kills ──────────────────────────────────
+    const nextRng   = mulberry32((Date.now() + tick * 31_337) >>> 0);
+    const nextLevel = Math.min(zoneMax, Math.max(1, newLevel));
+    const spawnBoss = newTotalKills % BOSS_EVERY_N_KILLS === 0;
+    nextEnemy = generateEnemy(state.zoneId, spawnBoss ? Math.min(zoneMax, nextLevel + 2) : nextLevel, spawnBoss, nextRng);
     enemyHp   = nextEnemy.hp;
     effects   = [];
-    newEntries.push(`A ${nextEnemy.name} (Lv.${nextEnemy.level}) appears!`);
+    if (spawnBoss) {
+      newEntries.push(`👑 A BOSS appears: ${nextEnemy.name} (Lv.${nextEnemy.level})!`);
+    } else {
+      newEntries.push(`A ${nextEnemy.name} (Lv.${nextEnemy.level}) appears!`);
+    }
 
   } else if (playerHp <= 0) {
     // ── Player defeated ──────────────────────────────────────────────────────
@@ -342,22 +400,35 @@ export async function POST() {
     finalPlayerHp = playerHp;
   }
 
-  // ── Phase 6: Persist ─────────────────────────────────────────────────────────
+  // ── Phase 6: Process skill XP gains ─────────────────────────────────────────
+  const updatedSkills = { ...skills } as CharacterSkills;
+  const skillLevelUps: string[] = [];
+  for (const [skillId, xpAmount] of Object.entries(skillXpGains) as [SkillId, number][]) {
+    const current = updatedSkills[skillId] ?? initSkill();
+    const { skill: newSkill, leveledUp } = awardSkillXp(current, xpAmount);
+    updatedSkills[skillId] = newSkill;
+    if (leveledUp) skillLevelUps.push(`📈 ${skillId} skill up! (${newSkill.level})`);
+  }
+  const newAaPointsTotal = Math.floor(newTotalKills / AA_KILLS_PER_POINT);
+
+  // ── Phase 7: Persist ─────────────────────────────────────────────────────────
   await db.update(charactersTable).set({
     hp: finalPlayerHp,
     xp: newXp,
     level: newLevel,
     xpToNext: newXpToNext,
     gold: newGold,
-    totalKills: newTotalKills,
-    bossKills: newBossKills,
-    goldEarned: newGoldEarned,
+    totalKills:  newTotalKills,
+    bossKills:   newBossKills,
+    goldEarned:  newGoldEarned,
     totalDeaths: newDeaths,
-    updatedAt: new Date(),
+    skills:      updatedSkills as unknown as Record<string, unknown>,
+    aaPoints:    newAaPointsTotal,
+    updatedAt:   new Date(),
   }).where(eq(charactersTable.id, char.id));
 
   const currentEnemy = nextEnemy ?? enemy;
-  const combinedLog  = [...newEntries, ...prevLog].slice(0, MAX_LOG);
+  const combinedLog  = [...skillLevelUps, ...newEntries, ...prevLog].slice(0, MAX_LOG);
 
   await db.update(combatStateTable).set({
     enemyData:     currentEnemy as unknown as Record<string, unknown>,
@@ -382,5 +453,8 @@ export async function POST() {
     newXp,
     newXpToNext,
     newGold,
+    aaPoints:    newAaPointsTotal,
+    skills:      updatedSkills,
+    isBossFight: nextEnemy?.isBoss ?? enemy.isBoss,
   });
 }

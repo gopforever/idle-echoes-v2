@@ -3,6 +3,7 @@
 // Each ghost has a personality + individual traits for unique behavior.
 
 import { pick, randInt, randFloat, shuffle, type Rng } from "../world-seed/rng.js";
+import type { Zone } from "../world-seed/types.js";
 
 export type GhostPersonality =
   | "Aggressive" | "Cautious" | "Explorer"
@@ -155,4 +156,98 @@ export function assignRivalries(ghosts: GhostSeed[], rng: Rng): GhostSeed[] {
   }
 
   return ghosts;
+}
+
+// ─── Ghost simulation ─────────────────────────────────────────────────────────
+// Called by the ghost/tick API route to advance ghost states and emit events.
+
+export interface GhostTickInput {
+  id: string;
+  name: string;
+  level: number;
+  personality: string;
+  currentZoneId: string;
+  killCount: number;
+  gold: number;
+}
+
+export interface GhostTickResult {
+  ghostId: string;
+  newLevel: number;
+  newKillCount: number;
+  newGold: number;
+  newZoneId: string;
+  eventMessage: string | null; // null = no notable event this tick
+  eventType: "kill" | "boss_kill" | "zone_change" | "level_up" | "loot" | null;
+}
+
+const ENEMY_NOUNS = ["Shade", "Stalker", "Golem", "Wraith", "Berserker", "Colossus", "Specter", "Lurker"];
+const RARE_ITEMS  = ["Runed Blade", "Shadow Helm", "Void Pendant", "Ancient Greaves", "Glacial Shield"];
+
+export function simulateGhostBatch(
+  ghosts: GhostTickInput[],
+  zones: Zone[],
+  rng: Rng,
+): GhostTickResult[] {
+  return ghosts.map(ghost => {
+    const cfg = PERSONALITY_CONFIG[ghost.personality as GhostPersonality];
+    const bossChance = (cfg?.bossChance ?? 0.05);
+    const zone       = zones.find(z => z.id === ghost.currentZoneId) ?? zones[0];
+    if (!zone) {
+      return { ghostId: ghost.id, newLevel: ghost.level, newKillCount: ghost.killCount, newGold: ghost.gold, newZoneId: ghost.currentZoneId, eventMessage: null, eventType: null };
+    }
+
+    let newLevel     = ghost.level;
+    let newKillCount = ghost.killCount;
+    let newGold      = ghost.gold;
+    let newZoneId    = ghost.currentZoneId;
+    let eventMessage: string | null = null;
+    let eventType: GhostTickResult["eventType"] = null;
+
+    // XP gain + kill
+    const killsThisTick = randInt(1, 4, rng);
+    newKillCount += killsThisTick;
+    newGold += randInt(1, ghost.level * 3, rng);
+
+    // Level up check (simple: every 50 kills ≈ 1 level)
+    const newLevelCalc = Math.min(60, 1 + Math.floor(newKillCount / 50));
+    if (newLevelCalc > newLevel) {
+      newLevel = newLevelCalc;
+      eventMessage = `${ghost.name} reached level ${newLevel}!`;
+      eventType = "level_up";
+    }
+
+    // Boss kill event
+    if (rng() < bossChance) {
+      eventMessage = `${ghost.name} slew ${zone.bossName} in ${zone.name}!`;
+      eventType = "boss_kill";
+      newGold += ghost.level * 10;
+    }
+    // Rare loot find
+    else if (rng() < 0.04) {
+      const item = pick(RARE_ITEMS, rng);
+      eventMessage = `${ghost.name} found ${item} in ${zone.name}.`;
+      eventType = "loot";
+    }
+    // Zone change (Explorer/Wanderer)
+    else if (rng() < (cfg?.zoneChangeChance ?? 0.05) && zone.connections.length > 0) {
+      const nextId = pick(zone.connections, rng);
+      const nextZone = zones.find(z => z.id === nextId);
+      if (nextZone && nextZone.levelRange[0] <= newLevel + 5) {
+        newZoneId = nextId;
+        if (rng() < 0.3) {
+          eventMessage = `${ghost.name} ventured into ${nextZone.name}.`;
+          eventType = "zone_change";
+        }
+      }
+    }
+    // Generic kill event (low probability for feed variety)
+    else if (!eventMessage && rng() < 0.08) {
+      const enemyName = pick(ENEMY_NOUNS, rng);
+      eventMessage = `${ghost.name} defeated a ${enemyName} in ${zone.name}.`;
+      eventType = "kill";
+    }
+
+    return { ghostId: ghost.id, newLevel, newKillCount, newGold, newZoneId, eventMessage, eventType };
+  });
 }
