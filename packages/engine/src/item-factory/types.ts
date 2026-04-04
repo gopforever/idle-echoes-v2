@@ -39,5 +39,6 @@ export interface GeneratedItem {
   buyPrice: number;
   procedural: true;
   zoneId: string;
-  noSell: boolean; // fabled+ cannot be sold
+  noSell: boolean;      // fabled+ cannot be vendored
+  worldUnique?: boolean; // one per world, ever — fires a world event on drop
 }

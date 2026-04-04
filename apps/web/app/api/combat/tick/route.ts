@@ -1,14 +1,35 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { db, charactersTable, worldsTable, combatStateTable, inventoryTable } from "@repo/db";
-import { eq } from "drizzle-orm";
+import { db, charactersTable, worldsTable, combatStateTable, inventoryTable, worldEventsTable } from "@repo/db";
+import { eq, and } from "drizzle-orm";
 import {
-  generateEnemy, rollLoot, mulberry32,
+  generateEnemy, rollLoot, mulberry32, generateWorldUniqueItem,
   effectiveMitigation, effectiveAvoidance,
   xpToLevel, xpReward,
 } from "@repo/engine";
 import { createId } from "@paralleldrive/cuid2";
-import type { GeneratedEnemy, ZoneGraph } from "@repo/engine";
+import type { GeneratedEnemy, ZoneGraph, GeneratedItem, ItemStats } from "@repo/engine";
+
+// ─── Gear stat aggregation ────────────────────────────────────────────────────
+
+function sumGearStats(gear: Record<string, unknown>): ItemStats {
+  const totals: ItemStats = {};
+  for (const raw of Object.values(gear)) {
+    const item = raw as GeneratedItem;
+    if (!item?.stats) continue;
+    for (const [k, v] of Object.entries(item.stats)) {
+      if (typeof v !== "number") continue;
+      const key = k as keyof ItemStats;
+      if (key === "weaponDelay") {
+        // Use the equipped weapon delay directly, don't sum
+        if (!totals.weaponDelay) totals.weaponDelay = v;
+      } else {
+        (totals as Record<string, number>)[key] = ((totals as Record<string, number>)[key] ?? 0) + v;
+      }
+    }
+  }
+  return totals;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -90,12 +111,23 @@ export async function POST() {
   effects = effects.filter(e => e.remainingTicks > 0);
 
   // ── Phase 2: Player attacks enemy ───────────────────────────────────────────
+  const gearStats = sumGearStats(char.gear as Record<string, unknown>);
   if (!isStunned && enemyHp > 0) {
-    const isCrit = rng() < Math.min(0.5, 0.05 + char.level * 0.001);
-    const dmgMin  = Math.max(1, char.strength * 1.2 + char.level * 2);
-    const dmgMax  = Math.max(2, char.strength * 2.5 + char.level * 4);
-    const rawDmg  = Math.floor((dmgMin + rng() * (dmgMax - dmgMin)) * slowMult * (isCrit ? 1.5 : 1));
-    const dealt   = Math.max(1, Math.floor(rawDmg * (1 - enemy.mitigation)));
+    const baseCrit = 0.05 + char.level * 0.001 + (gearStats.critChance ?? 0) / 100;
+    const isCrit   = rng() < Math.min(0.60, baseCrit);
+    const critMult = 1.5 + (gearStats.critBonus ?? 0) / 100;
+    const hasteRed = Math.min(0.50, (gearStats.haste ?? 0) / 200);
+
+    // Weapon damage — use equipped weapon if available, else str-based
+    const dmgMin = gearStats.weaponDamageMin ?? Math.max(1, char.strength * 1.2 + char.level * 2);
+    const dmgMax = gearStats.weaponDamageMax ?? Math.max(2, char.strength * 2.5 + char.level * 4);
+    const atkBonus = 1 + (gearStats.attackRating ?? 0) / 200;
+    const speedBonus = 1 + hasteRed; // haste = more attacks per tick
+
+    const rawDmg = Math.floor(
+      (dmgMin + rng() * (dmgMax - dmgMin)) * slowMult * (isCrit ? critMult : 1) * atkBonus * speedBonus
+    );
+    const dealt = Math.max(1, Math.floor(rawDmg * (1 - enemy.mitigation)));
     enemyHp = Math.max(0, enemyHp - dealt);
     newEntries.push(isCrit
       ? `⚔️ CRIT! You hit ${enemy.name} for ${dealt}!`
@@ -165,9 +197,16 @@ export async function POST() {
   // ── Phase 4: Enemy attacks player ───────────────────────────────────────────
   if (enemyHp > 0 && playerHp > 0) {
     const charStats = {
-      level: char.level, strength: char.strength, agility: char.agility,
-      stamina: char.stamina, intelligence: char.intelligence,
-      wisdom: char.wisdom, charisma: char.charisma,
+      level:         char.level,
+      strength:      char.strength  + (gearStats.strength  ?? 0),
+      agility:       char.agility   + (gearStats.agility   ?? 0),
+      stamina:       char.stamina   + (gearStats.stamina   ?? 0),
+      intelligence:  char.intelligence + (gearStats.intelligence ?? 0),
+      wisdom:        char.wisdom    + (gearStats.wisdom    ?? 0),
+      charisma:      char.charisma  + (gearStats.charisma  ?? 0),
+      defenseRating: gearStats.defenseRating,
+      mitigation:    gearStats.mitigation,
+      avoidance:     gearStats.avoidance,
     };
     const avoidance  = effectiveAvoidance(charStats);
     const mitigation = effectiveMitigation(charStats);
@@ -233,6 +272,47 @@ export async function POST() {
         slot: null,
         createdAt: new Date(),
       });
+    }
+
+    // ── World Unique drop check (boss only, level 20+, 1% chance) ──────────────
+    if (enemy.isBoss && newLevel >= 20 && lootRng() < 0.01 && worlds[0]) {
+      const world = worlds[0];
+      const alreadyClaimed = await db.select().from(worldEventsTable)
+        .where(and(
+          eq(worldEventsTable.worldId, world.id),
+          eq(worldEventsTable.zoneId, state.zoneId),
+          eq(worldEventsTable.eventType, "unique_claimed"),
+        )).limit(1);
+
+      if (!alreadyClaimed.length) {
+        const zoneGraph = world.zoneGraph as unknown as ZoneGraph;
+        const currentZone = zoneGraph.zones.find(z => z.id === state.zoneId);
+        const uniqueItem = generateWorldUniqueItem(
+          Number(world.seed),
+          state.zoneId,
+          currentZone?.name ?? state.zoneId,
+          currentZone?.bossName ?? "the Ancient",
+        );
+        await db.insert(inventoryTable).values({
+          id: createId(),
+          characterId: char.id,
+          itemData: uniqueItem as unknown as Record<string, unknown>,
+          quantity: 1,
+          slot: null,
+          createdAt: new Date(),
+        });
+        await db.insert(worldEventsTable).values({
+          id: createId(),
+          worldId: world.id,
+          ghostId: null,
+          zoneId: state.zoneId,
+          eventType: "unique_claimed",
+          message: `${char.name} has claimed ${uniqueItem.name} — the only one in this world!`,
+          metadata: { itemId: uniqueItem.id, itemName: uniqueItem.name, characterName: char.name } as Record<string, unknown>,
+          createdAt: new Date(),
+        });
+        newEntries.push(`🌟 WORLD FIRST! You found ${uniqueItem.name} — the only one in existence!`);
+      }
     }
 
     // Spawn next enemy

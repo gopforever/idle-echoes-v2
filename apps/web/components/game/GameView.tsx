@@ -2,6 +2,7 @@
 import { useState, useCallback } from "react";
 import { WorldMap } from "./WorldMap";
 import { CombatPanel } from "./CombatPanel";
+import { InventoryPanel } from "./InventoryPanel";
 import type { CombatInitial } from "./CombatPanel";
 import type { ZoneGraph, FactionWeb, WorldHistory, GeneratedEnemy } from "@repo/engine";
 
@@ -96,6 +97,10 @@ export function GameView({ worldName, zoneGraph, factionWeb, history, character,
     setCombat(null);
   }
 
+  const handleGoldUpdate = useCallback((gold: number) => {
+    setCharGold(gold);
+  }, []);
+
   return (
     <div className="space-y-4">
       {/* Character status bar */}
@@ -166,6 +171,12 @@ export function GameView({ worldName, zoneGraph, factionWeb, history, character,
           )}
         </div>
       </div>
+      {/* Inventory / Paperdoll / Merchant — always visible below */}
+      <InventoryPanel
+        currentZoneId={currentZoneId}
+        characterLevel={charLevel}
+        onGoldUpdate={handleGoldUpdate}
+      />
     </div>
   );
 }

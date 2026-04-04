@@ -212,6 +212,56 @@ export function rollLoot(
   return results;
 }
 
+/**
+ * Generate the one-of-a-kind world unique item for a zone.
+ * Seeded by worldSeed + zoneId — always the same item for that world/zone.
+ * Call only after confirming it has not yet been claimed (check world_events).
+ */
+export function generateWorldUniqueItem(
+  worldSeed: number,
+  zoneId: string,
+  zoneName: string,
+  bossName: string,
+): GeneratedItem {
+  const zoneHash = zoneId.split("").reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 0);
+  const rng = mulberry32((worldSeed ^ zoneHash) >>> 0);
+
+  const slot = pick(ALL_SLOTS, rng);
+  const noun = SLOT_NOUN[slot];
+  const zoneWord = zoneName.split(" ")[0] ?? zoneName;
+  const bossPart = bossName.split(",")[0]?.split(" ").slice(-1)[0] ?? "Ancient";
+  const uniquePrefixes = ["Primordial", "Eternal", "Forsaken", "First", "Undying", "Mythic"];
+  const name = `${pick(uniquePrefixes, rng)} ${noun} of ${zoneWord}`;
+
+  const stats = scaleStats(slot, 55, "mythical", rng);
+  // World uniques get an extra 50% on all stats
+  for (const key of Object.keys(stats) as (keyof ItemStats)[]) {
+    if (key !== "weaponDelay") {
+      const v = stats[key];
+      if (typeof v === "number") (stats as Record<string, number>)[key] = Math.floor(v * 1.5);
+    }
+  }
+
+  return {
+    id:          `worldunique_${worldSeed}_${zoneId}`,
+    name,
+    description: `An artifact of incomprehensible power, bound to the essence of ${bossPart}. Only one may ever exist in this world.`,
+    type:        (slot === "primary" || slot === "secondary") ? "weapon"
+               : (slot === "neck" || slot.startsWith("ear") || slot.startsWith("ring") || slot === "charm") ? "accessory"
+               : "armor",
+    slot,
+    rarity:      "mythical",
+    level:       55,
+    stats,
+    sellPrice:   0,
+    buyPrice:    0,
+    procedural:  true,
+    zoneId,
+    noSell:      true,
+    worldUnique: true,
+  };
+}
+
 /** Session-stable merchant stock (seeded by zone + level). */
 export function getMerchantStock(zoneId: string, characterLevel: number, count = 4): GeneratedItem[] {
   const seed = zoneId.split("").reduce((s, c) => s * 31 + c.charCodeAt(0), characterLevel);
