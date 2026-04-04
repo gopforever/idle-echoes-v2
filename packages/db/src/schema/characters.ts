@@ -1,5 +1,5 @@
 import {
-  pgTable, text, integer, real, boolean,
+  pgTable, text, integer, boolean,
   jsonb, timestamp, index,
 } from "drizzle-orm/pg-core";
 import { worldsTable } from "./worlds";

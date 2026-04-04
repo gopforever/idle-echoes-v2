@@ -2,7 +2,7 @@ import type {
   EnemyBaseType, EnemySize, EnemyElement, EnemyRole,
   EnemyModifier, EnemyTraits, GeneratedEnemy, EnemyAbility,
 } from "./types.js";
-import { pick, randInt, randFloat, type Rng } from "../world-seed/rng.js";
+import { pick, randInt, type Rng } from "../world-seed/rng.js";
 import { xpReward } from "../formulas/index.js";
 
 export * from "./types.js";

@@ -1,5 +1,5 @@
-import type { ItemRarity, ItemSlot, ItemType, ItemStats, GeneratedItem } from "./types.js";
-import { pick, randInt, type Rng } from "../world-seed/rng.js";
+import type { ItemRarity, ItemSlot, ItemStats, GeneratedItem } from "./types.js";
+import { pick, type Rng } from "../world-seed/rng.js";
 import { mulberry32 } from "../world-seed/rng.js";
 
 export * from "./types.js";

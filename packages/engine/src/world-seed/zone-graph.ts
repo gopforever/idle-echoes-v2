@@ -1,5 +1,5 @@
 import type { Biome, Zone, ZoneGraph, Faction } from "./types.js";
-import { pick, pickN, randInt, shuffle, type Rng } from "./rng.js";
+import { pick, randInt, type Rng } from "./rng.js";
 
 // ─── Name parts by biome ─────────────────────────────────────────────────────
 

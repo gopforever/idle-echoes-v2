@@ -3,7 +3,6 @@
 // Each ghost has a personality + individual traits for unique behavior.
 
 import { pick, randInt, randFloat, shuffle, type Rng } from "../world-seed/rng.js";
-import type { Zone } from "../world-seed/types.js";
 
 export type GhostPersonality =
   | "Aggressive" | "Cautious" | "Explorer"
@@ -93,7 +92,7 @@ const PERSONALITIES: GhostPersonality[] = [
   "Aggressive", "Cautious", "Explorer", "Greedy", "Scholarly", "Devout", "Crafter",
 ];
 
-export function generateGhostSeeds(worldSeed: number, zoneIds: string[], rng: Rng): GhostSeed[] {
+export function generateGhostSeeds(_worldSeed: number, zoneIds: string[], rng: Rng): GhostSeed[] {
   const names = shuffle([...GHOST_NAMES], rng);
   const personalities = shuffle([...PERSONALITIES], rng);
 

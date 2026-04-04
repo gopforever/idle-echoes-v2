@@ -1,6 +1,5 @@
 import type { Faction, FactionAlignment } from "./types.js";
 import { pick, randInt, type Rng } from "./rng.js";
-import { generateName } from "./zone-graph.js";
 
 // ─── Faction generation ───────────────────────────────────────────────────────
 
