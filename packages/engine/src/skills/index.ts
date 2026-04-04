@@ -40,7 +40,7 @@ export const SKILL_MILESTONES: Record<SkillId, [number, string][]> = {
   magic:     [[10,"+5% XP"],[25,"+10% XP"],[50,"+15% XP"],[100,"+20% XP"],[200,"+25% XP"]],
   survival:  [[10,"+5% HP"],[25,"+10% HP"],[50,"+15% HP -25% death"],[100,"+20% HP -50% death"],[200,"+30% HP"]],
   luck:      [[10,"+10% gold"],[25,"+20% gold"],[50,"+25% gold"],[100,"+35% gold"],[200,"+50% gold"]],
-  meditation:[[10,"75s CD"],[25,"+25% HP/Power"],[50,"45s CD"],[100,"+50% HP/Power"],[200,"15s CD, full restore"]],
+  meditation:[[10,"regen +0.1%/s"],[25,"+25% regen"],[50,"regen +0.5%/s"],[100,"+50% regen"],[200,"full restore pace"]],
 };
 
 export const SKILL_MAX = 200;
