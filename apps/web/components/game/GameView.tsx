@@ -5,12 +5,15 @@ import { CombatPanel } from "./CombatPanel";
 import { InventoryPanel } from "./InventoryPanel";
 import { SkillsAAPanel } from "./SkillsAAPanel";
 import { WorldEventsFeed } from "./WorldEventsFeed";
+import { GatheringPanel } from "./GatheringPanel";
+import { CraftingPanel } from "./CraftingPanel";
 import { cn } from "@/lib/utils";
 import type { CombatInitial } from "./CombatPanel";
 import type { ActiveAAResult } from "./SkillsAAPanel";
-import type { ZoneGraph, FactionWeb, WorldHistory, GeneratedItem } from "@repo/engine";
+import type { ZoneGraph, FactionWeb, WorldHistory, GeneratedItem, GatherResult } from "@repo/engine";
 
-const MEDITATE_INTERVAL_MS = 6_000; // EQ tick = 6 seconds
+const MEDITATE_INTERVAL_MS = 6_000;  // EQ tick = 6 seconds
+const GATHER_INTERVAL_MS  = 30_000; // Gathering tick = 30 seconds
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -110,8 +113,8 @@ const NAV_SECTIONS: NavSection[] = [
       { id: "inventory",  label: "Inventory",  icon: "🎒" },
       { id: "bank",       label: "Bank",       icon: "🏦", stub: true },
       { id: "skills",     label: "Skills",     icon: "⚡" },
-      { id: "gathering",  label: "Gathering",  icon: "🌿", stub: true },
-      { id: "crafting",   label: "Crafting",   icon: "🔨", stub: true },
+      { id: "gathering",  label: "Gathering",  icon: "🌿" },
+      { id: "crafting",   label: "Crafting",   icon: "🔨" },
     ],
   },
   {
@@ -132,7 +135,7 @@ const NAV_SECTIONS: NavSection[] = [
 ];
 
 const STUB_IDS: NavId[] = [
-  "bank", "gathering", "crafting", "dungeons", "auction",
+  "bank", "dungeons", "auction",
   "factions", "achievements", "adornments", "collections", "mounts",
 ];
 
@@ -574,6 +577,10 @@ export function GameView({ worldName, zoneGraph, factionWeb, history, character,
   const [meditating, setMeditating] = useState(false);
   const [regenFlash, setRegenFlash] = useState<string | null>(null);
 
+  // Gathering tick (runs every 30s when not in combat)
+  const gatherRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [recentYields, setRecentYields] = useState<GatherResult[]>([]);
+
   // Called by WorldMap "Travel Here" button
   async function handleTravel(zoneId: string, zoneName: string) {
     setIsTraveling(true);
@@ -654,6 +661,27 @@ export function GameView({ worldName, zoneGraph, factionWeb, history, character,
     }
     return () => { if (meditateRef.current) { clearInterval(meditateRef.current); meditateRef.current = null; } };
   }, [combat, doMeditateTick]);
+
+  // ── Gathering tick ───────────────────────────────────────────────────────────
+  const doGatheringTick = useCallback(async () => {
+    try {
+      const res  = await fetch("/api/gathering/tick", { method: "POST" });
+      const data = await res.json() as { ok: boolean; results?: GatherResult[] };
+      if (data.ok && data.results && data.results.length > 0) {
+        setRecentYields(prev => [...prev, ...data.results!].slice(-20));
+      }
+    } catch { /* passive, non-critical */ }
+  }, []);
+
+  // Start/stop gathering interval based on whether player is in combat
+  useEffect(() => {
+    if (combat) {
+      if (gatherRef.current) { clearInterval(gatherRef.current); gatherRef.current = null; }
+    } else {
+      gatherRef.current = setInterval(() => void doGatheringTick(), GATHER_INTERVAL_MS);
+    }
+    return () => { if (gatherRef.current) { clearInterval(gatherRef.current); gatherRef.current = null; } };
+  }, [combat, doGatheringTick]);
 
   function handleFlee() {
     setCombat(null);
@@ -854,6 +882,24 @@ export function GameView({ worldName, zoneGraph, factionWeb, history, character,
               aaCooldowns={aaCooldowns}
               onActiveAAUsed={handleActiveAAUsed}
             />
+          </div>
+        )}
+
+        {/* Gathering */}
+        {activePanel === "gathering" && (
+          <div className="p-6">
+            <GatheringPanel
+              inCombat={combat !== null}
+              currentZoneId={currentZoneId}
+              recentYields={recentYields}
+            />
+          </div>
+        )}
+
+        {/* Crafting */}
+        {activePanel === "crafting" && (
+          <div className="p-6">
+            <CraftingPanel />
           </div>
         )}
 

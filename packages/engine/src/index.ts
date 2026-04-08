@@ -5,3 +5,4 @@ export * from "./formulas/index.js";
 export * from "./ghost-world/index.js";
 export * from "./skills/index.js";
 export * from "./aa/index.js";
+export * from "./tradeskills/index.js";
